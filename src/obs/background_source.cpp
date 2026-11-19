@@ -109,7 +109,14 @@ void BackgroundSource::loadVideo()
 		return;
 	}
 	obs_source_set_muted(video_, true);
+	// OBS 33 replaced the monitoring type with an on/off switch and deprecated the
+	// old call, which now logs a warning each time it runs. The setter does not
+	// exist before 33, so older builds keep the original call.
+#if LIBOBS_API_MAJOR_VER >= 33
+	obs_source_set_monitoring_enabled(video_, false);
+#else
 	obs_source_set_monitoring_type(video_, OBS_MONITORING_TYPE_NONE);
+#endif
 	obs_source_inc_active(video_);
 	obs_source_inc_showing(video_);
 	PM_LOG_INFO("background video source created: %s", videoPath_.c_str());
