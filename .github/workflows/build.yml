@@ -7,15 +7,16 @@ on:
   workflow_dispatch:
 
 env:
-  ORT_VERSION: "1.24.4"
+  # ONNX Runtime comes from nuget.org (tools/fetch-ort.sh) on Linux and macOS,
+  # because the microsoft/onnxruntime GitHub releases it was downloaded from went
+  # away in November 2026. Each pin is the SHA-512, base64, of the .nupkg, which
+  # was also checked with `dotnet nuget verify` (signed by Microsoft Corporation).
+  # Change a pin only together with its version, from a package you verified.
+  ORT_LINUX_VERSION: "1.24.4"
+  ORT_LINUX_NUPKG_SHA512: "9d1BXfyvyzp0YfEKCPAzfqIsG6j4r4Exbaq/dJYHWt0YGuyw3jyr6+vbn12jr75QdICq80t24RiUCQiMzFwurA=="
   # 1.23.0 is the last ONNX Runtime with macOS x86_64 builds; 1.24 is Apple
   # Silicon only. Using it keeps one bundle working on Intel Macs.
   ORT_MACOS_VERSION: "1.23.0"
-  # macOS gets ONNX Runtime from nuget.org (tools/fetch-ort-macos.sh), because the
-  # microsoft/onnxruntime GitHub releases it was downloaded from went away in
-  # November 2026. This is the SHA-512, base64, of the 1.23.0 .nupkg, which was
-  # also checked with `dotnet nuget verify` (signed by Microsoft Corporation).
-  # Change it only together with ORT_MACOS_VERSION, from a package you verified.
   ORT_MACOS_NUPKG_SHA512: "/gLCW+eWUXyjPJkrEmlGkRn9cdHd62s2MrJCq96WLixCXgyUK8xQi50r6uNS1+4FSTuYGrWxFDoFI6IPoJMHAA=="
 
 jobs:
@@ -64,11 +65,10 @@ jobs:
           # it, so the install check below cannot run without it present.
           sudo apt-get install -y build-essential cmake ninja-build pkg-config \
             libobs-dev obs-studio libcurl4-openssl-dev nlohmann-json3-dev file
-      - name: Fetch ONNX Runtime
+      - name: Fetch ONNX Runtime (from NuGet)
         run: |
-          curl -fsSL -O https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz
-          tar xzf onnxruntime-linux-x64-${ORT_VERSION}.tgz
-          echo "ORT_ROOT=$PWD/onnxruntime-linux-x64-${ORT_VERSION}" >> "$GITHUB_ENV"
+          tools/fetch-ort.sh linux-x64 "$ORT_LINUX_VERSION" "$ORT_LINUX_NUPKG_SHA512" "$PWD/onnxruntime-linux"
+          echo "ORT_ROOT=$PWD/onnxruntime-linux" >> "$GITHUB_ENV"
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DPROMATTE_ORT_ROOT="$ORT_ROOT"
       - name: Build
@@ -147,7 +147,7 @@ jobs:
         run: brew install cmake ninja nlohmann-json
       - name: Fetch ONNX Runtime (universal, from NuGet)
         run: |
-          tools/fetch-ort-macos.sh "$ORT_MACOS_VERSION" "$ORT_MACOS_NUPKG_SHA512" "$PWD/onnxruntime-macos"
+          tools/fetch-ort.sh macos "$ORT_MACOS_VERSION" "$ORT_MACOS_NUPKG_SHA512" "$PWD/onnxruntime-macos"
           echo "ORT_ROOT=$PWD/onnxruntime-macos" >> "$GITHUB_ENV"
       - name: Cache libobs
         id: obscache

@@ -193,17 +193,19 @@ The staged plugin tree is in `build/stage/` and mirrors the OBS install layout.
 sudo apt install build-essential cmake ninja-build pkg-config \
      libobs-dev libcurl4-openssl-dev nlohmann-json3-dev
 
-# ONNX Runtime is not packaged by any distribution; use the upstream release
-curl -fsSLO https://github.com/microsoft/onnxruntime/releases/download/v1.24.4/onnxruntime-linux-x64-1.24.4.tgz
-tar xzf onnxruntime-linux-x64-1.24.4.tgz
+# ONNX Runtime is not packaged by any distribution. Fetch it from NuGet; the pin is
+# the SHA-512 of the package (see ORT_LINUX_NUPKG_SHA512 in .github/workflows/build.yml)
+tools/fetch-ort.sh linux-x64 1.24.4 \
+    '9d1BXfyvyzp0YfEKCPAzfqIsG6j4r4Exbaq/dJYHWt0YGuyw3jyr6+vbn12jr75QdICq80t24RiUCQiMzFwurA==' \
+    "$PWD/onnxruntime-linux"
 
 python3 -m pip install -r tools/models/requirements.txt   # bundled models, one-time
 python3 tools/models/convert_models.py && python3 tools/models/fix_pphumanseg.py
 
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-      -DPROMATTE_ORT_ROOT="$PWD/onnxruntime-linux-x64-1.24.4"
+      -DPROMATTE_ORT_ROOT="$PWD/onnxruntime-linux"
 cmake --build build --parallel
-LD_LIBRARY_PATH="$PWD/onnxruntime-linux-x64-1.24.4/lib" ./build/bin/promatte-unit-tests
+LD_LIBRARY_PATH="$PWD/onnxruntime-linux/lib" ./build/bin/promatte-unit-tests
 cd build && cpack          # produces the .deb and the .tar.gz
 ```
 
