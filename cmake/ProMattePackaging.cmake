@@ -60,7 +60,11 @@ if(APPLE)
     else()
         set(_arch_tag "${CMAKE_SYSTEM_PROCESSOR}")
     endif()
-    set(CPACK_PACKAGE_FILE_NAME "ProMatte-${PROJECT_VERSION}-macos-${_arch_tag}")
+    # A bundle built against one OBS major version does not load in another (OBS 33
+    # removed exports that 30-32 still have), so a build can say which it is for
+    # and the archive is named accordingly, e.g. -DPROMATTE_PACKAGE_SUFFIX=-OBS33.
+    set(PROMATTE_PACKAGE_SUFFIX "" CACHE STRING "Suffix appended to the macOS archive name, e.g. -OBS33")
+    set(CPACK_PACKAGE_FILE_NAME "ProMatte-${PROJECT_VERSION}-macos-${_arch_tag}${PROMATTE_PACKAGE_SUFFIX}")
 else()
     set(CPACK_GENERATOR "DEB;TGZ")
     set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")

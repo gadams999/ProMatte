@@ -8,10 +8,15 @@ on:
 
 env:
   ORT_VERSION: "1.24.4"
-  # 1.23.0 is the last ONNX Runtime with macOS x86_64 and universal2 builds;
-  # 1.24 is Apple Silicon only. Using it keeps one bundle working on Intel Macs.
+  # 1.23.0 is the last ONNX Runtime with macOS x86_64 builds; 1.24 is Apple
+  # Silicon only. Using it keeps one bundle working on Intel Macs.
   ORT_MACOS_VERSION: "1.23.0"
-  OBS_VERSION: "31.1.1"
+  # macOS gets ONNX Runtime from nuget.org (tools/fetch-ort-macos.sh), because the
+  # microsoft/onnxruntime GitHub releases it was downloaded from went away in
+  # November 2026. This is the SHA-512, base64, of the 1.23.0 .nupkg, which was
+  # also checked with `dotnet nuget verify` (signed by Microsoft Corporation).
+  # Change it only together with ORT_MACOS_VERSION, from a package you verified.
+  ORT_MACOS_NUPKG_SHA512: "/gLCW+eWUXyjPJkrEmlGkRn9cdHd62s2MrJCq96WLixCXgyUK8xQi50r6uNS1+4FSTuYGrWxFDoFI6IPoJMHAA=="
 
 jobs:
   # The bundled models are converted from TFLite/Paddle and are not committed,
@@ -106,9 +111,32 @@ jobs:
 
   macos:
     needs: models
-    # macos-15 for the macOS 15 SDK (Xcode 16), which OBS 31 requires;
-    # the macos-14 image ships SDK 14.5 and libobs refuses to configure.
-    runs-on: macos-15 # Apple Silicon
+    name: macos (OBS ${{ matrix.obs }})
+    # One bundle per OBS line. OBS 33 removed the gs_image_file4 exports that
+    # 30-32 still have, so a bundle built against either does not load in the
+    # other. The runner has to ship the SDK that OBS' own CMake demands:
+    #   OBS 31: macOS 15 SDK (Xcode 16); the macos-14 image has 14.5 and libobs
+    #           refuses to configure.
+    #   OBS 33: macOS 26.5 SDK (Xcode 26.5); macos-15 stops at Xcode 26.3.
+    # obs_deps is the obs-deps release each OBS version pins in its own build
+    # files. target is 13.4 because the ONNX Runtime libraries from NuGet are
+    # built for macOS 13.4; the linker warns if the target is lower and dyld
+    # would refuse to load them on anything older.
+    runs-on: ${{ matrix.runner }} # Apple Silicon
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - obs: "31.1.1"
+            runner: macos-15
+            obs_deps: "2025-07-11"
+            target: "13.4"
+            suffix: ""
+          - obs: "33.0.1"
+            runner: macos-26
+            obs_deps: "2026-10-23"
+            target: "13.4"
+            suffix: "-OBS33"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -117,37 +145,35 @@ jobs:
           path: models/converted
       - name: Install build dependencies
         run: brew install cmake ninja nlohmann-json
-      - name: Fetch ONNX Runtime (universal2)
+      - name: Fetch ONNX Runtime (universal, from NuGet)
         run: |
-          curl -fsSL -O https://github.com/microsoft/onnxruntime/releases/download/v${ORT_MACOS_VERSION}/onnxruntime-osx-universal2-${ORT_MACOS_VERSION}.tgz
-          tar xzf onnxruntime-osx-universal2-${ORT_MACOS_VERSION}.tgz
-          echo "ORT_ROOT=$PWD/onnxruntime-osx-universal2-${ORT_MACOS_VERSION}" >> "$GITHUB_ENV"
-          lipo -archs onnxruntime-osx-universal2-${ORT_MACOS_VERSION}/lib/libonnxruntime.dylib
+          tools/fetch-ort-macos.sh "$ORT_MACOS_VERSION" "$ORT_MACOS_NUPKG_SHA512" "$PWD/onnxruntime-macos"
+          echo "ORT_ROOT=$PWD/onnxruntime-macos" >> "$GITHUB_ENV"
       - name: Cache libobs
         id: obscache
         uses: actions/cache@v4
         with:
           path: obs-sdk
-          key: libobs-${{ env.OBS_VERSION }}-macos15-universal-v1
+          key: libobs-${{ matrix.obs }}-deps${{ matrix.obs_deps }}-${{ matrix.runner }}-t${{ matrix.target }}-universal-v2
       - name: Build libobs
         if: steps.obscache.outputs.cache-hit != 'true'
         run: |
           # No Homebrew formula ships libobs headers, so build the library only:
           # no plugins, no frontend, which keeps this to a few minutes.
-          curl -fsSL -o obs.tar.gz https://github.com/obsproject/obs-studio/archive/refs/tags/${OBS_VERSION}.tar.gz
+          curl -fsSL -o obs.tar.gz https://github.com/obsproject/obs-studio/archive/refs/tags/${{ matrix.obs }}.tar.gz
           tar xzf obs.tar.gz
-          curl -fsSL -o deps.tar.xz https://github.com/obsproject/obs-deps/releases/download/2025-07-11/macos-deps-2025-07-11-universal.tar.xz
+          curl -fsSL -o deps.tar.xz https://github.com/obsproject/obs-deps/releases/download/${{ matrix.obs_deps }}/macos-deps-${{ matrix.obs_deps }}-universal.tar.xz
           mkdir -p obs-deps && tar xf deps.tar.xz -C obs-deps
           # OBS' own cmake refuses any generator but Xcode on macOS
           # (cmake/macos/compilerconfig.cmake), so libobs is built with Xcode
           # even though ProMatte itself builds with Ninja.
-          cmake -S obs-studio-${OBS_VERSION} -B obs-build -G Xcode \
+          cmake -S obs-studio-${{ matrix.obs }} -B obs-build -G Xcode \
             -DCMAKE_PREFIX_PATH="$PWD/obs-deps" \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=${{ matrix.target }} \
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
             -DOBS_CMAKE_VERSION=3.0.0 \
             -DENABLE_PLUGINS=OFF -DENABLE_FRONTEND=OFF -DENABLE_UI=OFF \
-            -DENABLE_SCRIPTING=OFF -DOBS_VERSION_OVERRIDE=${OBS_VERSION} \
+            -DENABLE_SCRIPTING=OFF -DOBS_VERSION_OVERRIDE=${{ matrix.obs }} \
             -DCODESIGN_IDENTITY=- -DCODESIGN_TEAM=
           # The Development component installs obs-frontend-api too, so build it as
           # well even though ProMatte does not use it; tools/setup-deps.ps1 builds
@@ -167,7 +193,8 @@ jobs:
             -Dlibobs_DIR="$PWD/obs-sdk/Frameworks/libobs.framework/Resources/cmake" \
             -DCMAKE_PREFIX_PATH="$PWD/obs-sdk;$PWD/obs-deps" \
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=${{ matrix.target }} \
+            -DPROMATTE_PACKAGE_SUFFIX="${{ matrix.suffix }}"
       - name: Build
         run: cmake --build build --parallel
       - name: Unit tests
@@ -216,7 +243,7 @@ jobs:
           python3 tools/check-macos-bundle.py /tmp/pkgcheck/*/promatte.plugin
       - uses: actions/upload-artifact@v4
         with:
-          name: promatte-macos-universal
+          name: promatte-macos-universal-obs${{ matrix.obs }}
           path: |
             build/*.zip
             build/*.tar.gz
