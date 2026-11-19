@@ -153,8 +153,12 @@ jobs:
         id: obscache
         uses: actions/cache@v4
         with:
-          path: obs-sdk
-          key: libobs-${{ matrix.obs }}-deps${{ matrix.obs_deps }}-${{ matrix.runner }}-t${{ matrix.target }}-universal-v2
+          # obs-deps has to be restored with the SDK: libobsConfig.cmake of OBS 33
+          # looks up SIMDe through it, so configuring fails on a cache hit without it.
+          path: |
+            obs-sdk
+            obs-deps
+          key: libobs-${{ matrix.obs }}-deps${{ matrix.obs_deps }}-${{ matrix.runner }}-t${{ matrix.target }}-universal-v3
       - name: Build libobs
         if: steps.obscache.outputs.cache-hit != 'true'
         run: |
